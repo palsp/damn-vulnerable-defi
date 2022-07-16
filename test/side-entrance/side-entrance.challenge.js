@@ -23,7 +23,6 @@ describe('[Challenge] Side entrance', function () {
         ).to.equal(ETHER_IN_POOL);
     });
 
-    it('Exploit', async function () {
         /** CODE YOUR EXPLOIT HERE */
     });
 
