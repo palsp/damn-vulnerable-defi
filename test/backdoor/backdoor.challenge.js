@@ -114,7 +114,9 @@ describe('[Challenge] Backdoor', function () {
 				[
 					[addr],
 					1,
+					// delegate call to fallback
 					fallBackHandler.address,
+					// delegate call approve function
 					encodedApprove,
 					constants.AddressZero,
 					constants.AddressZero,
